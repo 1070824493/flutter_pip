@@ -5,29 +5,26 @@ import UIKit
 
 class PiPHelper: NSObject, AVPictureInPictureControllerDelegate {
     static let shared = PiPHelper()
-
+    
     private var playerLayer: AVPlayerLayer?
     private var player: AVPlayer?
     private var pipController: AVPictureInPictureController?
-
-    private var engineGroup = FlutterEngineGroup(name: "pip.flutter", project: nil)
-    private var flPiPEngine: FlutterEngine?
-    private var flutterController: FlutterViewController?
-
+    
+    private var observer: NSObjectProtocol?
     
     private var isEnable: Bool = false
     private var rootWindow: UIWindow?
-
+    
     private var registrar: FlutterPluginRegistrar?
-
+    
     public func setRegistrar(_ registrar: FlutterPluginRegistrar) {
         if self.registrar == nil {
             self.registrar = registrar
         }
     }
-
+    
     var channels: [Int: FlutterMethodChannel] = [:]
-
+    
     public func newFlutterMethodChannel(_ messenger: FlutterBinaryMessenger) {
         let channel = FlutterMethodChannel(name: "fl_pip", binaryMessenger: messenger)
         channel.setMethodCallHandler { call, result in
@@ -35,11 +32,11 @@ class PiPHelper: NSObject, AVPictureInPictureControllerDelegate {
         }
         channels[messenger.hash] = channel
     }
-
+    
     private var enableArgs: [String: Any?] = [:]
-
+    
     private var isCallDisable: Bool = false
-
+    
     public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         switch call.method {
         case "enable":
@@ -82,9 +79,9 @@ class PiPHelper: NSObject, AVPictureInPictureControllerDelegate {
             result(nil)
         }
     }
-
+    
     var audioPath: String?
-
+    
     func enable() -> Bool {
         do {
             try AVAudioSession.sharedInstance().setCategory(.playback, options: .mixWithOthers)
@@ -99,7 +96,7 @@ class PiPHelper: NSObject, AVPictureInPictureControllerDelegate {
         var aspectRatio = 16.0 / 9.0
         if let rate = enableArgs["aspectRatio"] as? [String : Any],
            let width = rate["numerator"] as? Double,
-            let height = rate["denominator"] as? Double {
+           let height = rate["denominator"] as? Double {
             aspectRatio = width / height
         }
         let packageName = enableArgs["packageName"] as? String
@@ -107,14 +104,12 @@ class PiPHelper: NSObject, AVPictureInPictureControllerDelegate {
             if packageName != nil {
                 videoPath = registrar!.lookupKey(forAsset: videoPath, fromPackage: packageName!)
             } else {
-                videoPath = registrar!.lookupKey(forAsset: videoPath)
+                if !videoPath.hasPrefix("/var/mobile") {
+                    videoPath = registrar!.lookupKey(forAsset: videoPath)
+                }
             }
         }
         
-        guard let bundleVideoPath = Bundle.main.path(forResource: videoPath, ofType: nil) else {
-            print("FlPiP error : Unable to load video resources, \(videoPath) in \(packageName ?? "current")")
-            return false
-        }
         if isAvailable() {
             if rootWindow == nil {
                 print("FlPiP error : rootWindow is null")
@@ -127,37 +122,45 @@ class PiPHelper: NSObject, AVPictureInPictureControllerDelegate {
             let y = enableArgs["top"] as? CGFloat ?? 0
             let width = enableArgs["width"] as? CGFloat ?? UIScreen.main.bounds.size.width
             let height = width / aspectRatio
-
+            
             playerLayer!.frame = .init(x: x, y: y, width: width, height: height)
-           
-            player = AVPlayer(url: URL(fileURLWithPath: bundleVideoPath))
+            
+            player = AVPlayer(url: URL(fileURLWithPath: videoPath))
             playerLayer!.player = player
             playerLayer?.videoGravity = .resizeAspectFill
-//            player!.allowsExternalPlayback = true
-//            player!.accessibilityElementsHidden = true
+            //            player!.allowsExternalPlayback = true
+            //            player!.accessibilityElementsHidden = true
             pipController = AVPictureInPictureController(playerLayer: playerLayer!)
             pipController!.delegate = self
-
-           let enableControls = enableArgs["enableControls"] as! Bool
-           pipController!.setValue(enableControls ? 0 : 1, forKey: "controlsStyle")
-
-           let enablePlayback = enableArgs["enablePlayback"] as! Bool
-           pipController!.setValue(enablePlayback ? 0 : 1, forKey: "requiresLinearPlayback")
-
+            
+            let enableControls = enableArgs["enableControls"] as! Bool
+            pipController!.setValue(enableControls ? 0 : 1, forKey: "controlsStyle")
+            
+            let enablePlayback = enableArgs["enablePlayback"] as! Bool
+            pipController!.setValue(enablePlayback ? 0 : 1, forKey: "requiresLinearPlayback")
+            
             if #available(iOS 14.2, *) {
                 pipController!.canStartPictureInPictureAutomaticallyFromInline = true
             }
             player!.play()
             rootWindow!.rootViewController?.view?.layer.addSublayer(playerLayer!)
-                DispatchQueue.main.asyncAfter(deadline: DispatchTime.now() + 0.4) {
-                    self.pipController!.startPictureInPicture()
-                }
+            DispatchQueue.main.asyncAfter(deadline: DispatchTime.now() + 0.4) {
+                self.pipController!.startPictureInPicture()
+            }
+            
+            UIControl().sendAction(#selector(URLSessionTask.suspend), to: UIApplication.shared, for: nil)
+            
+            observer = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: player?.currentItem, queue: .main) { [weak player] _ in
+                player?.seek(to: CMTime.zero)
+                player?.play()
+            }
+            
             return true
         }
         return false
     }
-
-
+    
+    
     public func background() {
         /// 切换后台
         let targetSelect = #selector(NSXPCConnection.suspend)
@@ -165,32 +168,35 @@ class PiPHelper: NSObject, AVPictureInPictureControllerDelegate {
             UIApplication.shared.perform(targetSelect)
         }
     }
-
+    
     public func isAvailable() -> Bool {
         AVPictureInPictureController.isPictureInPictureSupported()
     }
-
+    
     public func pictureInPictureControllerDidStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
         if let firstWindow = UIApplication.shared.windows.first, rootWindow != nil {
             let rect = firstWindow.rootViewController?.view.frame ?? CGRect(x: 0, y: 0, width: UIScreen.main.bounds.size.width, height: UIScreen.main.bounds.size.height)
             setPiPStatus(0)
         }
     }
-
+    
     func setPiPStatus(_ int: Int) {
         channels.forEach { channel in
             channel.value.invokeMethod("onPiPStatus", arguments: ["status": int])
         }
     }
-
+    
     public func pictureInPictureControllerDidStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
         if !isCallDisable {
             dispose()
         }
     }
-
+    
     public func dispose() {
         pipController?.stopPictureInPicture()
+        if let ob = observer {
+            NotificationCenter.default.removeObserver(ob)
+        }
         if rootWindow != nil {
             let rect = CGRect(x: 0, y: 0, width: UIScreen.main.bounds.size.width, height: UIScreen.main.bounds.size.height)
             let firstWindow = UIApplication.shared.windows.first
@@ -215,23 +221,17 @@ class PiPHelper: NSObject, AVPictureInPictureControllerDelegate {
         isEnable = false
         
     }
-
+    
     public func applicationWillEnterForeground(_ application: UIApplication) {
         pipController?.stopPictureInPicture()
     }
-
+    
     public func applicationDidEnterBackground(_ application: UIApplication) {
-
+        
         pipController?.startPictureInPicture()
     }
-
+    
     public func windows() -> [UIWindow]? {
         return UIApplication.shared.windows
-        //        if #available(iOS 13.0, *) {
-        //            let windowScene = (UIApplication.shared.connectedScenes.first as? UIWindowScene)
-        //            return windowScene?.windows
-        //        } else {
-        //            return UIApplication.shared.windows
-        //        }
     }
 }
