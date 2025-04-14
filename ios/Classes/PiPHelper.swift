@@ -222,12 +222,17 @@ class PiPHelper: NSObject, AVPictureInPictureControllerDelegate {
     }
     
     public func applicationWillEnterForeground(_ application: UIApplication) {
-        pipController?.stopPictureInPicture()
+        
+        DispatchQueue.main.asyncAfter(deadline: DispatchTime.now() + 0.4) {
+            self.pipController?.stopPictureInPicture()
+        }
+        
     }
     
     public func applicationDidEnterBackground(_ application: UIApplication) {
-        
-        pipController?.startPictureInPicture()
+        DispatchQueue.main.asyncAfter(deadline: DispatchTime.now() + 0.4) {
+            self.pipController?.startPictureInPicture()
+        }
     }
     
     public func windows() -> [UIWindow]? {
