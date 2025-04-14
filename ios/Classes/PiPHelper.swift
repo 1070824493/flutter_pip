@@ -146,9 +146,8 @@ class PiPHelper: NSObject, AVPictureInPictureControllerDelegate {
             rootWindow!.rootViewController?.view?.layer.addSublayer(playerLayer!)
             DispatchQueue.main.asyncAfter(deadline: DispatchTime.now() + 0.4) {
                 self.pipController!.startPictureInPicture()
+                UIControl().sendAction(#selector(URLSessionTask.suspend), to: UIApplication.shared, for: nil)
             }
-            
-            UIControl().sendAction(#selector(URLSessionTask.suspend), to: UIApplication.shared, for: nil)
             
             observer = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: player?.currentItem, queue: .main) { [weak player] _ in
                 player?.seek(to: CMTime.zero)
